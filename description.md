@@ -10,10 +10,10 @@
 flowchart TD
     UserClient([Client / Frontend React UI]) -->|HTTP / SSE| FastAPIServer["FastAPI Server (app/main.py & app/api/routes/)"]
     
-    subgraph Storage & Persistence
-        PostgresDB[(PostgreSQL Container: hirepulse-postgres)]
-        ChromaStore[(ChromaDB: Database/chroma_db)]
-        FileStore[(Uploads: Database/uploads)]
+    subgraph Storage & Persistence Containers
+        PostgresDB[(PostgreSQL + PGVector: hirepulse-postgres)]
+        MinIOStore[(MinIO Object Storage: hirepulse-minio)]
+        PgWebUI[("pgweb Web-UI: hirepulse-pgweb (port 8081)")]
     end
 
     subgraph Agent & Memory Layer
@@ -21,15 +21,15 @@ flowchart TD
         AgentGraph <--> STM["Short-Term Memory (app/memory/stm.py)"]
         AgentGraph <--> LTM["Long-Term Memory (app/memory/ltm.py)"]
         STM <--> PostgresDB
-        LTM <--> ChromaStore
+        LTM <--> PostgresDB
     end
 
     subgraph RAG & Knowledge Retrieval
         AgentGraph --> RAGTool["search_knowledge_base (app/agent/tools/rag_tools.py)"]
         RAGTool --> HybridEngine["HybridRAG Pipeline (app/rag/pipeline.py)"]
-        HybridEngine <--> ChromaStore
+        HybridEngine <--> PostgresDB
         FastAPIServer --> DocLoader["Document Ingestion (app/rag/loaders.py)"]
-        DocLoader --> FileStore
+        DocLoader --> MinIOStore
         DocLoader --> HybridEngine
     end
 ```

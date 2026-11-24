@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: hirepulse-postgres
     restart: unless-stopped
     environment:
@@ -16,6 +16,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  minio:
+    image: cleanstart/minio:latest
+    container_name: hirepulse-minio
+    user: "0:0"
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   pgweb:
     image: sosedoff/pgweb:latest
     container_name: hirepulse-pgweb
@@ -27,6 +48,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
 volumes:
   postgres_data:
+    driver: local
+  minio_data:
     driver: local

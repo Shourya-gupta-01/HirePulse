@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessageChunk, HumanMessage
 
-from app.agent.graph import chatbot
+from app.agent.graph import chatbot, langfuse_handler
 from app.api.schemas.chat import ChatRequest
 
 router = APIRouter()
@@ -13,7 +13,11 @@ router = APIRouter()
 @router.post("/chat")
 def chat_stream(req: ChatRequest):
     thread_id = req.thread_id or str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
+    callbacks = [langfuse_handler] if langfuse_handler else []
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "callbacks": callbacks,
+    }
 
     def event_generator():
         try:

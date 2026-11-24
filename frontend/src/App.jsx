@@ -41,17 +41,20 @@ export default function App() {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  async function loadThreads() {
+  async function loadThreads(autoSelectLatest = false) {
     try {
       const list = await fetchThreads();
       setThreads(list);
+      if (autoSelectLatest && list.length > 0) {
+        handleSelectThread(list[0].id);
+      }
     } catch (err) {
       setError(err.message);
     }
   }
 
   useEffect(() => {
-    loadThreads();
+    loadThreads(true);
   }, []);
 
   useEffect(() => {

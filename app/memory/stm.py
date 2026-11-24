@@ -146,17 +146,41 @@ def get_hidden_threads() -> set[str]:
 
 
 def get_threads(include_hidden: bool = False) -> list[str]:
-    """List unique thread IDs recorded in the checkpointer, excluding hidden threads by default."""
+    """List unique thread IDs recorded in the checkpointer, ordered by latest activity."""
     hidden = set() if include_hidden else get_hidden_threads()
     with pool.connection() as c:
         with c.cursor() as cur:
-            cur.execute("SELECT DISTINCT thread_id FROM checkpoints")
+            cur.execute(
+                """
+                SELECT thread_id, MAX(checkpoint->>'ts') as latest_ts
+                FROM checkpoints
+                GROUP BY thread_id
+                ORDER BY latest_ts DESC NULLS LAST
+                """
+            )
             rows = cur.fetchall()
             all_threads = [
                 r["thread_id"] if isinstance(r, dict) else r[0]
                 for r in rows
             ]
             return [tid for tid in all_threads if tid not in hidden]
+
+
+def _extract_text_content(content) -> str:
+    """Normalize message content to a safe string."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, str):
+                parts.append(b)
+            elif isinstance(b, dict):
+                parts.append(b.get("text", "") or str(b))
+            else:
+                parts.append(str(b))
+        return "".join(parts)
+    return str(content) if content is not None else ""
 
 
 def get_thread_messages(chatbot, thread_id: str) -> list[dict]:
@@ -166,7 +190,10 @@ def get_thread_messages(chatbot, thread_id: str) -> list[dict]:
     formatted = []
     for msg in raw_messages:
         if isinstance(msg, HumanMessage):
-            formatted.append({"role": "user", "content": msg.content})
+            text = _extract_text_content(msg.content)
+            formatted.append({"role": "user", "content": text})
         elif isinstance(msg, AIMessage) and msg.content:
-            formatted.append({"role": "assistant", "content": msg.content})
+            text = _extract_text_content(msg.content)
+            if text:
+                formatted.append({"role": "assistant", "content": text})
     return formatted

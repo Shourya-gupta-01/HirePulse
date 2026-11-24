@@ -1,21 +1,34 @@
+import logging
 import uuid
 from typing import Dict, List, Optional
 
-from langchain_chroma import Chroma
+import psycopg
 from langchain_core.documents import Document
+from langchain_postgres.vectorstores import PGVector
 
-from app.config import PERSIST_DIR
+from app.config import DATABASE_URL
 from app.rag.embeddings import embeddings
+
+logger = logging.getLogger(__name__)
+
+
+def get_pg_connection_url(url: str = DATABASE_URL) -> str:
+    """Format standard PostgreSQL connection string for SQLAlchemy/psycopg."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
 
 
 class LongTermMemory:
-    """Manages cross-thread persistent user facts, preferences, and context using ChromaDB."""
+    """Manages cross-thread persistent user facts, preferences, and context using PGVector."""
 
     def __init__(self, collection_name: str = "user_long_term_memory"):
-        self.vectorstore = Chroma(
+        self.collection_name = collection_name
+        self.vectorstore = PGVector(
+            embeddings=embeddings,
             collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=str(PERSIST_DIR),
+            connection=get_pg_connection_url(),
+            use_jsonb=True,
         )
 
     def add_memory(
@@ -30,27 +43,35 @@ class LongTermMemory:
         if not text:
             return {"id": "", "action": "empty"}
 
+        uid_str = str(user_id)
+
         # Check for existing memory on the same topic for this user
         try:
             existing = self.vectorstore.similarity_search_with_relevance_scores(
-                text, k=1, filter={"user_id": str(user_id)}
+                text, k=1, filter={"user_id": uid_str}
             )
             if existing:
                 doc, score = existing[0]
-                existing_id = doc.metadata.get("id")
+                existing_id = doc.metadata.get("id") or doc.id
 
                 # 1. Exact duplicate check (normalized text)
                 if doc.page_content.strip().lower() == text.lower():
-                    return {"id": existing_id, "action": "exact_duplicate"}
+                    return {"id": str(existing_id), "action": "exact_duplicate"}
 
                 # 2. Semantic near-duplicate / update check
                 if score >= similarity_threshold:
                     doc.page_content = text
                     doc.metadata["category"] = category
-                    self.vectorstore.add_documents([doc], ids=[existing_id])
-                    return {"id": existing_id, "action": "updated"}
-        except Exception:
-            pass
+                    doc.metadata["user_id"] = uid_str
+                    # In PGVector, replace the existing document
+                    if existing_id:
+                        self.vectorstore.delete(ids=[str(existing_id)])
+                    new_id = str(existing_id) if existing_id else str(uuid.uuid4())
+                    doc.metadata["id"] = new_id
+                    self.vectorstore.add_documents([doc], ids=[new_id])
+                    return {"id": new_id, "action": "updated"}
+        except Exception as exc:
+            logger.warning("Error during LTM semantic deduplication check: %s", exc)
 
         # 3. New distinct memory
         memory_id = str(uuid.uuid4())
@@ -58,7 +79,7 @@ class LongTermMemory:
             page_content=text,
             metadata={
                 "id": memory_id,
-                "user_id": str(user_id),
+                "user_id": uid_str,
                 "category": category,
             },
         )
@@ -77,34 +98,47 @@ class LongTermMemory:
                 filter={"user_id": str(user_id)},
             )
             return [doc.page_content for doc in results if doc.page_content]
-        except Exception:
+        except Exception as exc:
+            logger.warning("Error searching memories in PGVector: %s", exc)
             return []
 
     def get_all_memories(self, user_id: str = "default_user") -> List[Dict[str, str]]:
-        """List all memories for a user."""
+        """List all memories for a user from PGVector."""
         try:
-            data = self.vectorstore.get(where={"user_id": str(user_id)})
-            memories = []
-            if data and data.get("documents"):
-                documents = data.get("documents") or []
-                metadatas = data.get("metadatas") or []
-                for text, meta in zip(documents, metadatas):
-                    meta = meta or {}
-                    memories.append({
-                        "id": meta.get("id", ""),
-                        "memory": text,
-                        "category": meta.get("category", "preference"),
-                    })
-            return memories
-        except Exception:
+            with psycopg.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT e.id, e.document, e.cmetadata
+                        FROM langchain_pg_embedding e
+                        JOIN langchain_pg_collection c ON e.collection_id = c.uuid
+                        WHERE c.name = %s
+                          AND e.cmetadata->>'user_id' = %s
+                        ORDER BY e.id ASC
+                        """,
+                        (self.collection_name, str(user_id)),
+                    )
+                    rows = cur.fetchall()
+                    memories = []
+                    for mid, text, meta in rows:
+                        meta = meta or {}
+                        memories.append({
+                            "id": str(meta.get("id") or mid),
+                            "memory": text or "",
+                            "category": meta.get("category", "preference"),
+                        })
+                    return memories
+        except Exception as exc:
+            logger.warning("Error reading all memories from PGVector: %s", exc)
             return []
 
     def delete_memory(self, memory_id: str) -> bool:
         """Remove a memory by its unique ID."""
         try:
-            self.vectorstore.delete(ids=[memory_id])
+            self.vectorstore.delete(ids=[str(memory_id)])
             return True
-        except Exception:
+        except Exception as exc:
+            logger.error("Error deleting memory %s from PGVector: %s", memory_id, exc)
             return False
 
 

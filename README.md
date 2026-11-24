@@ -74,14 +74,16 @@ HirePulse/
 │   │   ├── graph.py          # LangGraph state machine & reasoning loop
 │   │   ├── prompts.py        # System prompts & ATS resume evaluation guidelines
 │   │   └── tools/            # Agent toolset (RAG retriever, memory, search)
+│   ├── core/
+│   │   └── storage.py        # MinIO S3 object storage service for uploaded files
 │   ├── rag/
-│   │   ├── pipeline.py       # Hybrid RAG engine (BM25 + Chroma + FlashRank)
-│   │   ├── loaders.py        # Multi-format document parser (PDF, CSV, MD, TXT)
+│   │   ├── pipeline.py       # Hybrid RAG engine (BM25 + PGVector + FlashRank)
+│   │   ├── loaders.py        # Multi-format document parser (PDF, CSV, MD, TXT, Bytes)
 │   │   └── embeddings.py     # Shared Google GenAI embedding instance
 │   └── memory/
-│       ├── stm.py            # Short-Term Memory: SQLite checkpointer & token trimming
-│       └── ltm.py            # Long-Term Memory: ChromaDB persistent user facts
-├── Database/                 # Persistent SQLite & ChromaDB storage
+│       ├── stm.py            # Short-Term Memory: PostgreSQL checkpointer & token trimming
+│       └── ltm.py            # Long-Term Memory: PGVector persistent user facts
+├── docker-compose.yml        # PostgreSQL (pgvector), MinIO, and pgweb services
 ├── frontend/                 # Vite + React user interface
 ├── server.py                 # Server entry point (uvicorn server:app)
 ├── chat_app.py               # Agent module entry point & CLI testing
@@ -95,9 +97,10 @@ HirePulse/
 - **Backend**: Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/), Uvicorn
 - **Agent Orchestration**: [LangGraph](https://langchain-ai.github.io/langgraph/), LangChain Core & Community
 - **Memory & Storage**: 
-  - Short-Term Memory (STM): LangGraph SQLite Checkpointer
-  - Long-Term Memory (LTM): Persistent User Profile & Preference Vector Store
-  - Vector DB: ChromaDB with Hybrid BM25 & FlashRank Reranker
+  - Short-Term Memory (STM): LangGraph PostgreSQL Checkpointer (`hirepulse-postgres`)
+  - Long-Term Memory (LTM): Persistent User Profile & Preference Vector Store with PGVector
+  - Vector Store: PostgreSQL with `pgvector` extension (Hybrid BM25 + Dense PGVector + FlashRank Reranker)
+  - File / Object Storage: Dedicated MinIO container (`hirepulse-minio`) with S3 API (port 9000) & Web Console (port 9001)
 - **External Tools & Protocols**:
   - Web Search: Live search tool (Tavily / Google Search / DuckDuckGo)
   - Integration Protocol: Model Context Protocol (MCP) - Gmail Server
