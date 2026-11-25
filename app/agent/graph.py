@@ -12,6 +12,7 @@ from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.config import (
+    FALLBACK_MODEL_NAME,
     LANGFUSE_HOST,
     LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
@@ -46,16 +47,33 @@ from app.rag.pipeline import rag_system
 from app.agent.tools import tools
 from app.agent.prompts import build_system_prompt
 
-# Initialize LLM
-model = ChatOpenAI(
+# Initialize LLM with automatic fallback and throughput routing
+primary_llm = ChatOpenAI(
     model=MODEL_NAME,
     base_url=OPENROUTER_BASE_URL,
-    request_timeout=60.0,
+    request_timeout=15.0,
+    max_retries=1,
+    max_tokens=2048,
     api_key=OPENR_API,
     temperature=0.1,
     streaming=True,
 )
-model_with_tools = model.bind_tools(tools)
+
+fallback_llm = ChatOpenAI(
+    model=FALLBACK_MODEL_NAME,
+    base_url=OPENROUTER_BASE_URL,
+    request_timeout=15.0,
+    max_retries=1,
+    max_tokens=2048,
+    api_key=OPENR_API,
+    temperature=0.1,
+    streaming=True,
+)
+
+model = primary_llm.with_fallbacks([fallback_llm])
+model_with_tools = primary_llm.bind_tools(tools).with_fallbacks(
+    [fallback_llm.bind_tools(tools)]
+)
 
 
 def Chatnode(state: convo, config: Optional[RunnableConfig] = None):
@@ -75,14 +93,8 @@ def Chatnode(state: convo, config: Optional[RunnableConfig] = None):
         summary = update_summary(summary, non_system_msgs[summarized_index:cutoff], model=model)
         summarized_index = cutoff
 
-    # Long-Term Memory (LTM): retrieve user-specific preferences and cross-thread memories
-    latest_user_text = ""
-    for m in reversed(non_system_msgs):
-        if isinstance(m, HumanMessage):
-            latest_user_text = m.content if isinstance(m.content, str) else str(m.content)
-            break
-
-    ltm_facts = ltm_store.search_memories(latest_user_text, k=3) if latest_user_text else []
+    # Long-Term Memory (LTM): fast DB retrieval of user preferences without embedding network latency
+    ltm_facts = ltm_store.get_recent_memories(limit=3)
 
     # Dynamic system prompt
     prompt = build_system_prompt(
@@ -95,14 +107,23 @@ def Chatnode(state: convo, config: Optional[RunnableConfig] = None):
     trimmed_msgs = safe_trim(non_system_msgs, max_tokens=2500)
     active_msgs = [SystemMessage(content=prompt)] + trimmed_msgs
 
-    callbacks = [langfuse_handler] if langfuse_handler else []
+    # Merge incoming config so LangGraph stream callbacks are preserved
+    call_config = dict(config) if config else {}
+    cb = call_config.get("callbacks")
+    if langfuse_handler:
+        if hasattr(cb, "add_handler"):
+            cb.add_handler(langfuse_handler, inherit=True)
+        elif isinstance(cb, list):
+            if langfuse_handler not in cb:
+                call_config["callbacks"] = cb + [langfuse_handler]
+        elif cb is None:
+            call_config["callbacks"] = [langfuse_handler]
+
     try:
-        response = model_with_tools.invoke(active_msgs, config={"callbacks": callbacks})
+        response = model_with_tools.invoke(active_msgs, config=call_config)
     except Exception:
-        if callbacks:
-            response = model_with_tools.invoke(active_msgs)
-        else:
-            raise
+        # Fallback to invoking with base config if callbacks caused issue
+        response = model_with_tools.invoke(active_msgs, config=config)
     return {
         "messages": [response],
         "summary": summary,
