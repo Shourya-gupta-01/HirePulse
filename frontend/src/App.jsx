@@ -20,6 +20,10 @@ import {
   FileText,
   Loader2,
   CheckCircle2,
+  Copy,
+  Check,
+  RotateCcw,
+  Clock,
 } from "lucide-react";
 import "./App.css";
 
@@ -31,6 +35,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [copiedIdx, setCopiedIdx] = useState(null);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState("");
@@ -40,6 +45,8 @@ export default function App() {
   const abortRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const inputStartTimeRef = useRef(null);
+  const lastTokenTimeRef = useRef(null);
 
   async function loadThreads(autoSelectLatest = false) {
     try {
@@ -109,10 +116,19 @@ export default function App() {
       abortRef.current.abort();
       abortRef.current = null;
     }
+    const finalTokenTimestamp = lastTokenTimeRef.current || performance.now();
+    const durationSec = inputStartTimeRef.current
+      ? ((finalTokenTimestamp - inputStartTimeRef.current) / 1000).toFixed(2)
+      : null;
+
     if (streamingContent) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: streamingContent },
+        {
+          role: "assistant",
+          content: streamingContent,
+          lastTokenDuration: durationSec,
+        },
       ]);
     }
     setStreamingContent("");
@@ -145,29 +161,23 @@ export default function App() {
     }
   }
 
-  async function handleSend(e) {
-    e?.preventDefault();
-    const trimmed = input.trim();
-    if (!trimmed || isStreaming) return;
-
+  async function executeChatStream(promptText, threadId = activeThreadId) {
     setError("");
     setUploadSuccess("");
-    setInput("");
     setIsStreaming(true);
     setStreamingContent("");
-
-    const userMsg = { role: "user", content: trimmed };
-    setMessages((prev) => [...prev, userMsg]);
+    inputStartTimeRef.current = performance.now();
+    lastTokenTimeRef.current = null;
 
     const controller = new AbortController();
     abortRef.current = controller;
     let accumulated = "";
-    let currentThreadId = activeThreadId;
+    let currentThreadId = threadId;
 
     try {
       await streamChat({
-        threadId: activeThreadId,
-        message: trimmed,
+        threadId: currentThreadId,
+        message: promptText,
         signal: controller.signal,
         onMeta: (evt) => {
           if (evt.thread_id && !currentThreadId) {
@@ -177,6 +187,7 @@ export default function App() {
         },
         onToken: (token) => {
           accumulated += token;
+          lastTokenTimeRef.current = performance.now();
           setStreamingContent((prev) => prev + token);
         },
         onError: (errMsg) => {
@@ -184,10 +195,19 @@ export default function App() {
         },
       });
 
+      const finalTokenTimestamp = lastTokenTimeRef.current || performance.now();
+      const durationSec = inputStartTimeRef.current
+        ? ((finalTokenTimestamp - inputStartTimeRef.current) / 1000).toFixed(2)
+        : null;
+
       if (accumulated) {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: accumulated },
+          {
+            role: "assistant",
+            content: accumulated,
+            lastTokenDuration: durationSec,
+          },
         ]);
       }
       setStreamingContent("");
@@ -203,6 +223,81 @@ export default function App() {
     }
   }
 
+  async function handleSend(e) {
+    e?.preventDefault();
+    const trimmed = input.trim();
+    if (!trimmed || isStreaming) return;
+
+    setInput("");
+    const userMsg = { role: "user", content: trimmed };
+    setMessages((prev) => [...prev, userMsg]);
+
+    await executeChatStream(trimmed, activeThreadId);
+  }
+
+  async function handleRegenerate(targetIdx = null) {
+    if (isStreaming) return;
+
+    let assistantIndex = targetIdx;
+    if (assistantIndex === null || assistantIndex === undefined) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "assistant") {
+          assistantIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (assistantIndex === null || assistantIndex === undefined || assistantIndex < 0) {
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      if (lastUser) {
+        await executeChatStream(lastUser.content, activeThreadId);
+      }
+      return;
+    }
+
+    let promptText = "";
+    for (let i = assistantIndex - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        promptText = messages[i].content;
+        break;
+      }
+    }
+
+    if (!promptText) return;
+
+    // Remove the assistant message being regenerated and any following messages
+    setMessages((prev) => prev.slice(0, assistantIndex));
+
+    await executeChatStream(promptText, activeThreadId);
+  }
+
+  async function handleCopy(text, idx) {
+    if (!text) return;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setCopiedIdx(idx);
+      setTimeout(() => {
+        setCopiedIdx((current) => (current === idx ? null : current));
+      }, 2000);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+    }
+  }
+
   function handleKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -211,6 +306,10 @@ export default function App() {
   }
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+  const canRegenerateLast =
+    !isStreaming &&
+    messages.length > 0 &&
+    messages[messages.length - 1].role === "assistant";
 
   return (
     <div className="app-shell">
@@ -291,7 +390,7 @@ export default function App() {
             {isStreaming && (
               <div className="streaming-badge">
                 <span className="pulse-dot" />
-                Streaming
+                <span>Streaming</span>
               </div>
             )}
           </div>
@@ -366,6 +465,55 @@ export default function App() {
                   </div>
                   <div className="message-bubble">
                     <div className="message-content">{msg.content}</div>
+
+                    {/* Message metadata & actions bar */}
+                    <div className="message-footer">
+                      {msg.role === "assistant" && msg.lastTokenDuration ? (
+                        <div
+                          className="last-token-time"
+                          title={`Time from user input to last token: ${msg.lastTokenDuration}s`}
+                        >
+                          <Clock size={12} />
+                          <span>Time taken: {msg.lastTokenDuration}s</span>
+                        </div>
+                      ) : (
+                        <span className="footer-spacer" />
+                      )}
+
+                      <div className="message-actions">
+                        <button
+                          type="button"
+                          className="msg-action-btn"
+                          title={copiedIdx === idx ? "Copied to clipboard!" : "Copy text"}
+                          onClick={() => handleCopy(msg.content, idx)}
+                        >
+                          {copiedIdx === idx ? (
+                            <>
+                              <Check size={12} className="copy-success-icon" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={12} />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+
+                        {msg.role === "assistant" && (
+                          <button
+                            type="button"
+                            className="msg-action-btn"
+                            title="Regenerate this response"
+                            onClick={() => handleRegenerate(idx)}
+                            disabled={isStreaming}
+                          >
+                            <RotateCcw size={12} />
+                            <span>Regenerate</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -386,6 +534,22 @@ export default function App() {
                       <span className="cursor-blink" />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Quick Regenerate button below the conversation */}
+              {canRegenerateLast && (
+                <div className="bottom-regenerate-wrapper">
+                  <button
+                    type="button"
+                    className="regenerate-bottom-btn"
+                    onClick={() => handleRegenerate()}
+                    disabled={isStreaming}
+                    title="Regenerate the latest response"
+                  >
+                    <RotateCcw size={13} />
+                    <span>Regenerate response</span>
+                  </button>
                 </div>
               )}
             </>
