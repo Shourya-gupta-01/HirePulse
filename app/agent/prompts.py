@@ -9,6 +9,8 @@ SYSTEM_PROMPT = (
 MEMORY_GUIDELINES = (
     "\n- You have persistent Long-Term Memory. If the user shares career preferences, target roles, preferred locations, "
     "skills, or asks you to remember something for future chats, use the `save_user_memory` tool to remember it."
+    "\n- If the user asks about older, specific, or historical background details not present in their active profile, "
+    "call the `recall_user_memories` tool to look them up."
 )
 
 def build_system_prompt(
@@ -21,8 +23,10 @@ def build_system_prompt(
 
     ltm_note = ""
     if ltm_facts:
-        ltm_note = "\n\n[User Long-Term Profile & Preferences (remembered across conversations)]:\n" + "\n".join(
-            f"- {f}" for f in ltm_facts
+        ltm_note = (
+            "\n\n[Active User Profile (core preferences)]:\n"
+            + "\n".join(f"- {f}" for f in ltm_facts)
+            + "\n- Tailor recommendations and advice to these preferences. For questions about these known details, answer directly without calling tools."
         )
 
     hirepulse_role_context = (
