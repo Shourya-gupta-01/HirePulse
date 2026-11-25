@@ -36,9 +36,15 @@ vectorstore = PGVector(
     use_jsonb=True,
 )
 
-# Text splitter & cross-encoder reranker
+# Text splitter & lazy cross-encoder reranker
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-reranker = FlashrankRerank(top_n=4)
+_reranker = None
+
+def get_reranker() -> FlashrankRerank:
+    global _reranker
+    if _reranker is None:
+        _reranker = FlashrankRerank(top_n=4)
+    return _reranker
 
 
 class HybridRAG:
@@ -166,7 +172,7 @@ class HybridRAG:
         )
 
         return ContextualCompressionRetriever(
-            base_compressor=reranker,
+            base_compressor=get_reranker(),
             base_retriever=hybrid_ensemble,
         )
 
