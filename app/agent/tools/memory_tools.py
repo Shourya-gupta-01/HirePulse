@@ -20,7 +20,7 @@ def save_user_memory(fact: str) -> str:
 
 @tool
 def recall_user_memories(topic: str) -> str:
-    """Search long-term memory for previously remembered facts, habits, career preferences, or resume details about the user on a specific topic."""
+    """Search long-term memory for past historical facts, detailed notes, past job applications, or preferences not already present in the active user profile."""
     memories = ltm_store.search_memories(topic)
     if not memories:
         return "No relevant long-term memories found for this topic."
