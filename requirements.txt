@@ -34,6 +34,7 @@ rank-bm25==0.2.2
 flashrank==0.2.10
 pypdf==7.0.1
 minio==7.2.20
+duckduckgo-search>=6.0.0
 
 # Environment & Utilities
 python-dotenv==1.2.4
