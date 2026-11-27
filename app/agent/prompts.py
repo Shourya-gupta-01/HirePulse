@@ -13,6 +13,18 @@ MEMORY_GUIDELINES = (
     "call the `recall_user_memories` tool to look them up."
 )
 
+WEB_SURFING_GUIDELINES = (
+    "\n- Web Surfing, Latest News & Resource Links Guidelines:"
+    "\n  1. When the user asks about latest news, current industry trends, recent hiring/layoff developments, "
+    "breaking tech updates, company culture, or any topic outside your internal training cutoff and uploaded documents, "
+    "ALWAYS call the `search_latest_news` tool to obtain real-time information."
+    "\n  2. If the user provides a specific web URL or asks to read/analyze an online job description or webpage, "
+    "call the `browse_webpage` tool."
+    "\n  3. Resource Links Requirement: Whenever you answer questions using web search or webpage browsing, "
+    "you MUST append a clear `### Sources & Resources` section at the very end of your response listing clickable "
+    "Markdown links (e.g., `- [Source Title](URL) — Source Name (Date)`) so the user can directly visit and verify the resources."
+)
+
 def build_system_prompt(
     attached_files: List[str],
     summary: str = "",
@@ -46,6 +58,7 @@ def build_system_prompt(
             f"- Synthesize clear, well-referenced, and actionable answers using the retrieved information."
             f"{hirepulse_role_context}"
             f"{MEMORY_GUIDELINES}"
+            f"{WEB_SURFING_GUIDELINES}"
             f"{summary_note}"
             f"{ltm_note}"
         )
@@ -56,6 +69,7 @@ def build_system_prompt(
             "are attached to this chat yet and they can attach files using the attachment button."
             f"{hirepulse_role_context}"
             f"{MEMORY_GUIDELINES}"
+            f"{WEB_SURFING_GUIDELINES}"
             f"{summary_note}"
             f"{ltm_note}"
         )
