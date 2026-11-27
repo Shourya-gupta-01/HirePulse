@@ -370,6 +370,10 @@ export default function App() {
         handleNewChat();
       }
     } catch (err) {
+      if (err?.status === 401) {
+        handleLogout("Your session expired. Please sign in again.");
+        return;
+      }
       setError(err.message);
     }
   }
@@ -417,6 +421,10 @@ export default function App() {
       );
       await loadThreads();
     } catch (err) {
+      if (err?.status === 401) {
+        handleLogout("Your session expired. Please sign in again.");
+        return;
+      }
       setError(err.message || "Failed to upload document");
     } finally {
       setIsUploading(false);
@@ -476,6 +484,10 @@ export default function App() {
       setStreamingContent("");
       await loadThreads();
     } catch (err) {
+      if (err?.status === 401) {
+        handleLogout("Your session expired. Please sign in again.");
+        return;
+      }
       if (err.name !== "AbortError") {
         setError(err.message || "Failed to stream message");
       }
