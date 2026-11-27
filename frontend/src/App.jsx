@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   deleteThread,
   fetchThreadMessages,
@@ -24,8 +26,193 @@ import {
   Check,
   RotateCcw,
   Clock,
+  ExternalLink,
+  Globe,
 } from "lucide-react";
 import "./App.css";
+
+function PreBlock({ children, ...props }) {
+  const [copied, setCopied] = useState(false);
+  const codeChild = children;
+  const className = codeChild?.props?.className || "";
+  const match = /language-(\w+)/.exec(className);
+  const lang = match ? match[1] : "";
+  const rawCode = codeChild?.props?.children
+    ? String(codeChild.props.children).replace(/\n$/, "")
+    : "";
+
+  async function handleCopyCode() {
+    if (!rawCode) return;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(rawCode);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = rawCode;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy code:", err);
+    }
+  }
+
+  return (
+    <div className="code-block-wrapper">
+      <div className="code-block-header">
+        <span className="code-block-lang">{lang || "code"}</span>
+        <button
+          type="button"
+          className="code-copy-btn"
+          onClick={handleCopyCode}
+          title="Copy code"
+        >
+          {copied ? (
+            <>
+              <Check size={12} className="copy-success-icon" />
+              <span>Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy size={12} />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="code-block-pre" {...props}>
+        {children}
+      </pre>
+    </div>
+  );
+}
+
+function getSourceName(href, children) {
+  if (!href) return children || "Link";
+  let hostname = "";
+  try {
+    const url = new URL(href, window.location.origin);
+    hostname = url.hostname.replace(/^www\./i, "");
+  } catch {
+    hostname = String(href).replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0];
+  }
+
+  const knownSources = {
+    "github.com": "GitHub",
+    "wikipedia.org": "Wikipedia",
+    "en.wikipedia.org": "Wikipedia",
+    "linkedin.com": "LinkedIn",
+    "twitter.com": "Twitter",
+    "x.com": "X (Twitter)",
+    "youtube.com": "YouTube",
+    "medium.com": "Medium",
+    "stackoverflow.com": "Stack Overflow",
+    "reddit.com": "Reddit",
+    "bloomberg.com": "Bloomberg",
+    "reuters.com": "Reuters",
+    "techcrunch.com": "TechCrunch",
+    "theverge.com": "The Verge",
+    "wsj.com": "Wall Street Journal",
+    "nytimes.com": "New York Times",
+    "cnbc.com": "CNBC",
+    "cnn.com": "CNN",
+    "bbc.com": "BBC",
+    "bbc.co.uk": "BBC",
+    "forbes.com": "Forbes",
+    "duckduckgo.com": "DuckDuckGo",
+    "google.com": "Google",
+    "news.google.com": "Google News",
+    "ycombinator.com": "Y Combinator",
+    "news.ycombinator.com": "Hacker News",
+    "docs.python.org": "Python Docs",
+    "python.org": "Python",
+    "careers.google.com": "Google Careers",
+  };
+
+  const domainLower = hostname.toLowerCase();
+  let cleanSource = knownSources[domainLower];
+  if (!cleanSource) {
+    const parts = domainLower.split(".");
+    if (parts.length >= 2) {
+      const mainPart = parts[parts.length - 2];
+      cleanSource = mainPart.charAt(0).toUpperCase() + mainPart.slice(1);
+    } else {
+      cleanSource = hostname;
+    }
+  }
+
+  let text = "";
+  if (typeof children === "string") text = children.trim();
+  else if (Array.isArray(children)) text = children.map((c) => (typeof c === "string" ? c : "")).join("").trim();
+  else if (children?.props?.children) text = String(children.props.children).trim();
+
+  const isUrlText =
+    !text ||
+    /^https?:\/\//i.test(text) ||
+    /^www\./i.test(text) ||
+    text.includes("http://") ||
+    text.includes("https://") ||
+    text === href;
+
+  if (isUrlText) {
+    return cleanSource || hostname || "Source";
+  }
+  return text;
+}
+
+function SourceLink({ href, children, ...props }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const sourceName = getSourceName(href, children);
+
+  return (
+    <span
+      className="source-link-wrapper"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="source-link-pill"
+        {...props}
+      >
+        <ExternalLink size={12} className="source-link-icon" />
+        <span className="source-link-text">{sourceName}</span>
+      </a>
+
+      {isHovered && href && (
+        <span className="url-popup-card" role="tooltip">
+          <span className="url-popup-header">
+            <Globe size={11} className="url-popup-icon" />
+            <span className="url-popup-domain">{sourceName}</span>
+          </span>
+          <span className="url-popup-href">{href}</span>
+          <span className="url-popup-hint">Click to open link ↗</span>
+          <span className="url-popup-arrow" />
+        </span>
+      )}
+    </span>
+  );
+}
+
+const markdownComponents = {
+  pre: PreBlock,
+  table: ({ node, ...props }) => (
+    <div className="table-responsive">
+      <table {...props} />
+    </div>
+  ),
+  a: SourceLink,
+};
 
 export default function App() {
   const [threads, setThreads] = useState([]);
@@ -464,7 +651,18 @@ export default function App() {
                     {msg.role === "user" ? <User size={16} /> : <Bot size={16} />}
                   </div>
                   <div className="message-bubble">
-                    <div className="message-content">{msg.content}</div>
+                    {msg.role === "assistant" ? (
+                      <div className="message-content markdown-body">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={markdownComponents}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div className="message-content">{msg.content}</div>
+                    )}
 
                     {/* Message metadata & actions bar */}
                     <div className="message-footer">
@@ -525,13 +723,25 @@ export default function App() {
                     <Bot size={16} />
                   </div>
                   <div className="message-bubble">
-                    <div className="message-content">
-                      {streamingContent || (
-                        <span className="thinking-text">
-                          Analyzing context & generating...
-                        </span>
+                    <div className="message-content markdown-body">
+                      {streamingContent ? (
+                        <>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={markdownComponents}
+                          >
+                            {streamingContent}
+                          </ReactMarkdown>
+                          <span className="cursor-blink" />
+                        </>
+                      ) : (
+                        <div className="thinking-row">
+                          <span className="thinking-text">
+                            Analyzing context & generating...
+                          </span>
+                          <span className="cursor-blink" />
+                        </div>
                       )}
-                      <span className="cursor-blink" />
                     </div>
                   </div>
                 </div>
