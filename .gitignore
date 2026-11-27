@@ -1,0 +1,6 @@
+.env
+__pycache__
+node_modules
+test_rag_upload.py
+Database
+/Test
