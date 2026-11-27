@@ -1,9 +1,12 @@
 import json
 import uuid
 from fastapi import APIRouter
+from fastapi import Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessageChunk, HumanMessage
 
+from app.memory.stm import is_thread_owner, register_user_thread
+from app.auth.security import get_current_user
 from app.agent.graph import chatbot, langfuse_handler
 from app.api.schemas.chat import ChatRequest
 
@@ -11,12 +14,17 @@ router = APIRouter()
 
 
 @router.post("/chat")
-def chat_stream(req: ChatRequest):
+def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current_user)):
     thread_id = req.thread_id or str(uuid.uuid4())
-    callbacks = [langfuse_handler] if langfuse_handler else []
+    if req.thread_id and not is_thread_owner(current_user["id"], thread_id):
+        raise HTTPException(status_code=403, detail="Unauthorized access")
+
+    register_user_thread(current_user["id"], thread_id)
     config = {
-        "configurable": {"thread_id": thread_id},
-        "callbacks": callbacks,
+        "configurable": {
+            "thread_id": thread_id,
+            "user_id": current_user["id"]
+        }
     }
 
     def event_generator():

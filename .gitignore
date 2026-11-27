@@ -1,12 +1,4 @@
 .env
-__pycache__
-node_modules
-test_rag_upload.py
-Database
-
-/Test
-# Environment variables
-.env
 .env.local
 .env.*.local
 
@@ -44,4 +36,3 @@ Database/
 .vscode/
 .idea/
 .DS_Store
-Thumbs.db

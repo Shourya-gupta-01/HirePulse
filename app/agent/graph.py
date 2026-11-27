@@ -82,6 +82,7 @@ def Chatnode(state: convo, config: Optional[RunnableConfig] = None):
     summarized_index = state.get("summarized_index", 0)
 
     thread_id = config.get("configurable", {}).get("thread_id") if config else None
+    user_id  = config.get("configurable", {}).get('user_id') if config else None
     attached_files = rag_system.get_thread_files(thread_id) if thread_id else []
 
     # Filter out previous system messages so prompt dynamically updates
@@ -93,8 +94,18 @@ def Chatnode(state: convo, config: Optional[RunnableConfig] = None):
         summary = update_summary(summary, non_system_msgs[summarized_index:cutoff], model=model)
         summarized_index = cutoff
 
+    latest_user_text = ""
+    for m in reversed(non_system_msgs):
+        if isinstance(m, HumanMessage) and isinstance(m.content, str):
+            latest_user_text = m.content
+            break
+
     # Long-Term Memory (LTM): fast DB retrieval of user preferences without embedding network latency
-    ltm_facts = ltm_store.get_recent_memories(limit=3)
+    ltm_facts = (
+        ltm_store.search_memories(latest_user_text, user_id=user_id, k= 3)
+        if (latest_user_text and user_id)
+        else[]
+    )
 
     # Dynamic system prompt
     prompt = build_system_prompt(

@@ -2,12 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  clearAuthSession,
   deleteThread,
+  fetchCurrentUser,
   fetchThreadMessages,
   fetchThreads,
+  getStoredToken,
+  getStoredUser,
   streamChat,
   uploadDocuments,
 } from "./api";
+import AuthScreen from "./components/AuthScreen";
 import {
   Bot,
   User,
@@ -26,6 +31,7 @@ import {
   Check,
   RotateCcw,
   Clock,
+  LogOut,
   ExternalLink,
   Globe,
 } from "lucide-react";
@@ -215,6 +221,9 @@ const markdownComponents = {
 };
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [authMessage, setAuthMessage] = useState("");
   const [threads, setThreads] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -235,6 +244,24 @@ export default function App() {
   const inputStartTimeRef = useRef(null);
   const lastTokenTimeRef = useRef(null);
 
+  function handleLogout(reason = "") {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    clearAuthSession();
+    setUser(null);
+    setThreads([]);
+    setActiveThreadId(null);
+    setMessages([]);
+    setActiveFiles([]);
+    setStreamingContent("");
+    setIsStreaming(false);
+    setError("");
+    setUploadSuccess("");
+    setAuthMessage(reason);
+  }
+
   async function loadThreads(autoSelectLatest = false) {
     try {
       const list = await fetchThreads();
@@ -243,12 +270,57 @@ export default function App() {
         handleSelectThread(list[0].id);
       }
     } catch (err) {
+      if (err?.status === 401) {
+        handleLogout("Your session expired. Please sign in again.");
+        return;
+      }
       setError(err.message);
     }
   }
 
+  async function handleAuthenticated(authedUser) {
+    setAuthMessage("");
+    setError("");
+    setActiveThreadId(null);
+    setMessages([]);
+    setActiveFiles([]);
+    setUser(authedUser);
+    await loadThreads(true);
+  }
+
   useEffect(() => {
-    loadThreads(true);
+    let cancelled = false;
+
+    async function initAuth() {
+      const token = getStoredToken();
+      if (!token) {
+        if (!cancelled) setIsCheckingAuth(false);
+        return;
+      }
+
+      try {
+        const me = await fetchCurrentUser();
+        if (cancelled) return;
+        const stored = getStoredUser();
+        setUser({
+          id: me?.id || stored?.id,
+          email: me?.email || stored?.email || "",
+        });
+        await loadThreads(true);
+      } catch {
+        if (!cancelled) {
+          clearAuthSession();
+          setUser(null);
+        }
+      } finally {
+        if (!cancelled) setIsCheckingAuth(false);
+      }
+    }
+
+    initAuth();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -267,6 +339,10 @@ export default function App() {
       setMessages(history);
       setActiveFiles(files);
     } catch (err) {
+      if (err?.status === 401) {
+        handleLogout("Your session expired. Please sign in again.");
+        return;
+      }
       setError(err.message);
     } finally {
       setIsLoadingThread(false);
@@ -498,6 +574,26 @@ export default function App() {
     messages.length > 0 &&
     messages[messages.length - 1].role === "assistant";
 
+  if (isCheckingAuth) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-loading">
+          <Loader2 size={20} className="spin" />
+          <span>Loading session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <AuthScreen
+        onAuthenticated={handleAuthenticated}
+        initialMessage={authMessage}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       {/* Sidebar */}
@@ -559,6 +655,24 @@ export default function App() {
               </div>
             ))
           )}
+        </div>
+
+        <div className="sidebar-footer">
+          <div className="user-pill" title={user.email}>
+            <div className="user-avatar">
+              <User size={14} />
+            </div>
+            <span className="user-email">{user.email}</span>
+          </div>
+          <button
+            type="button"
+            className="logout-btn"
+            title="Sign out"
+            onClick={() => handleLogout("")}
+            disabled={isStreaming}
+          >
+            <LogOut size={15} />
+          </button>
         </div>
       </aside>
 

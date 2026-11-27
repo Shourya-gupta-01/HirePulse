@@ -49,7 +49,25 @@ def init_db() -> None:
                     CREATE TABLE IF NOT EXISTS hidden_threads (
                         thread_id TEXT PRIMARY KEY,
                         hidden_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                    )
+                    );"""
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS users (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        email TEXT UNIQUE NOT NULL,
+                        hashed_password TEXT NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );"""
+                )
+                cur.execute(
+                    """
+                
+                    CREATE TABLE IF NOT EXISTS user_threads (
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        thread_id TEXT PRIMARY KEY,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
                     """
                 )
     except Exception as exc:
@@ -197,3 +215,39 @@ def get_thread_messages(chatbot, thread_id: str) -> list[dict]:
             if text:
                 formatted.append({"role": "assistant", "content": text})
     return formatted
+
+def register_user_thread(user_id: str, thread_id: str) -> None:
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_threads (user_id, thread_id)
+                VALUES (%s, %s)
+                ON CONFLICT (thread_id) DO UPDATE SET created_at = NOW()
+                """,
+                (str(user_id), str(thread_id)),
+            )
+
+def is_thread_owner(user_id: str, thread_id: str) -> bool:
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT COUNT(*) AS cnt FROM user_threads 
+                WHERE user_id = %s AND thread_id = %s""",
+                (str(user_id), str(thread_id))
+            )
+            row = cur.fetchone()
+            return row["cnt"] > 0
+
+def get_user_threads(user_id: str) -> list[str]:
+    hidden = get_hidden_threads()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT thread_id FROM user_threads 
+                WHERE user_id = %s ORDER BY created_at DESC""",
+                (str(user_id),)
+            )
+            rows = cur.fetchall()
+            return [r["thread_id"] for r in rows if r["thread_id"] not in hidden]
+

@@ -1,13 +1,126 @@
+const TOKEN_KEY = "hirepulse_token";
+const USER_KEY = "hirepulse_user";
+
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function getStoredToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getStoredUser() {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuthSession(data) {
+  if (data?.access_token) {
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+  }
+  if (data?.user_id || data?.email) {
+    localStorage.setItem(
+      USER_KEY,
+      JSON.stringify({ id: data.user_id, email: data.email })
+    );
+  }
+}
+
+export function clearAuthSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+function authHeaders(extra = {}) {
+  const token = getStoredToken();
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function parseErrorDetail(res, fallback) {
+  try {
+    const data = await res.json();
+    return data?.detail || data?.message || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function loginUser(email, password) {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!res.ok) {
+    const detail = await parseErrorDetail(res, `Login failed (${res.status})`);
+    throw new ApiError(detail, res.status);
+  }
+
+  const data = await res.json();
+  saveAuthSession(data);
+  return data;
+}
+
+export async function signupUser(email, password) {
+  const res = await fetch("/api/auth/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!res.ok) {
+    const detail = await parseErrorDetail(res, `Signup failed (${res.status})`);
+    throw new ApiError(detail, res.status);
+  }
+
+  const data = await res.json();
+  saveAuthSession(data);
+  return data;
+}
+
+export async function fetchCurrentUser() {
+  const res = await fetch("/api/auth/me", {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const detail = await parseErrorDetail(res, `Session expired (${res.status})`);
+    throw new ApiError(detail, res.status);
+  }
+  return res.json();
+}
+
 export async function fetchThreads() {
-  const res = await fetch("/api/threads");
-  if (!res.ok) throw new Error(`Failed to load threads (${res.status})`);
+  const res = await fetch("/api/threads", {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const detail = await parseErrorDetail(res, `Failed to load threads (${res.status})`);
+    throw new ApiError(detail, res.status);
+  }
   const data = await res.json();
   return data.threads || [];
 }
 
 export async function fetchThreadMessages(threadId) {
-  const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/messages`);
-  if (!res.ok) throw new Error(`Failed to load messages (${res.status})`);
+  const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/messages`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const detail = await parseErrorDetail(res, `Failed to load messages (${res.status})`);
+    throw new ApiError(detail, res.status);
+  }
   const data = await res.json();
   return {
     messages: data.messages || [],
@@ -18,8 +131,12 @@ export async function fetchThreadMessages(threadId) {
 export async function deleteThread(threadId) {
   const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
-  if (!res.ok) throw new Error(`Failed to delete thread (${res.status})`);
+  if (!res.ok) {
+    const detail = await parseErrorDetail(res, `Failed to delete thread (${res.status})`);
+    throw new ApiError(detail, res.status);
+  }
   return res.json();
 }
 
@@ -34,14 +151,15 @@ export async function uploadDocuments(files, threadId = null) {
 
   const res = await fetch("/api/documents/upload", {
     method: "POST",
+    headers: authHeaders(),
     body: formData,
   });
 
-  const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.detail || `Upload failed (${res.status})`);
+    const detail = await parseErrorDetail(res, `Upload failed (${res.status})`);
+    throw new ApiError(detail, res.status);
   }
-  return data;
+  return res.json();
 }
 
 export async function streamChat({
@@ -55,13 +173,14 @@ export async function streamChat({
 }) {
   const res = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ thread_id: threadId, message }),
     signal,
   });
 
   if (!res.ok) {
-    throw new Error(`Chat request failed (${res.status})`);
+    const detail = await parseErrorDetail(res, `Chat request failed (${res.status})`);
+    throw new ApiError(detail, res.status);
   }
 
   const reader = res.body.getReader();
