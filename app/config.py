@@ -4,6 +4,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Authentication /JWT
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "hirepulse")
+JWT_ALGORITHM = 'HS256'
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+
 # Base filesystem directories
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_DIR = BASE_DIR / "Database"
